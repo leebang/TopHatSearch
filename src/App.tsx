@@ -1,6 +1,7 @@
 import { SearchOutlined } from "@ant-design/icons";
-import { Divider, Input, Typography, message } from "antd";
-import { JSX, useState } from "react";
+import { Input, Typography, message } from "antd";
+import { useState, useRef } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import "./App.css";
 
 const { Search } = Input;
@@ -12,6 +13,11 @@ interface SearchResult {
 	parent_id: number;
 }
 
+interface FlattenedResult {
+	node: SearchResult;
+	depth: number;
+}
+
 type ApiResponse = SearchResult[];
 
 type FormattedMap = Map<number, SearchResult[]>;
@@ -19,6 +25,9 @@ type FormattedMap = Map<number, SearchResult[]>;
 function App() {
 	const [searchResults, setSearchResults] = useState<FormattedMap>(new Map());
 	const [loading, setLoading] = useState(false);
+
+	// Ref for scroll container
+	const parentRef = useRef<HTMLDivElement>(null);
 
 	// Format the API response into a map
 	const handleFormatResponse = (data: ApiResponse) => {
@@ -78,21 +87,23 @@ function App() {
 		}
 	};
 
-	const RenderResultItemWithoutRecursion = (data: FormattedMap) => {
-		// Iterative DFS to render items with cycle detection
+	// Flatten the tree structure into a linear array
+	const getFlattenedResults = () => {
+		if (searchResults.size === 0) return [];
 
-		const result: JSX.Element[] = [];
+		const result: FlattenedResult[] = [];
 		const visited = new Set<number>();
 
-		// Iterative DFS using a stack
-		const rootNodes = data.get(0) || [];
+		// Iterative DFS using
+		const rootNodes = searchResults.get(0) || [];
 		const stack: { node: SearchResult; depth: number }[] = [];
-		for (let i = 0; i < rootNodes.length; i++) {
+
+		for (let i = rootNodes.length - 1; i >= 0; i--) {
 			stack.push({ node: rootNodes[i], depth: 0 });
 		}
 
 		while (stack.length > 0) {
-			const item = stack.shift();
+			const item = stack.pop();
 			if (!item) continue;
 			const { node, depth } = item;
 
@@ -104,23 +115,13 @@ function App() {
 			// Mark as visited
 			visited.add(node.id);
 
-			if (depth === 0) {
-				result.push(<Divider key={`divider-${node.id}`} />);
-			}
+			result.push({ node, depth });
 
-			result.push(
-				<div key={node.id}>
-					{"- ".repeat(depth)}
-					{node.name}
-				</div>
-			);
-
-			const children = data.get(node.id) || [];
+			const children = searchResults.get(node.id) || [];
 
 			for (let i = children.length - 1; i >= 0; i--) {
-				// Only add children that haven't been visited
 				if (!visited.has(children[i].id)) {
-					stack.unshift({ node: children[i], depth: depth + 1 });
+					stack.push({ node: children[i], depth: depth + 1 });
 				}
 			}
 		}
@@ -128,8 +129,46 @@ function App() {
 		return result;
 	};
 
+	const flattenedResults = getFlattenedResults();
+
+	// Virtualizer, only render what user see
+	const rowVirtualizer = useVirtualizer({
+		count: flattenedResults.length,
+		getScrollElement: () => parentRef.current,
+		estimateSize: () => 35,
+		overscan: 5,
+	});
+
+	// Render individual items
+	const renderVirtualItem = (virtualItem: any) => {
+		const item = flattenedResults[virtualItem.index];
+		if (!item) return null;
+
+		const { node, depth } = item;
+
+		return (
+			<div
+				key={virtualItem.key}
+				style={{
+					position: "absolute",
+					top: 0,
+					left: 0,
+					width: "100%",
+					height: `${virtualItem.size}px`,
+					transform: `translateY(${virtualItem.start}px)`,
+					display: "flex",
+					alignItems: "center",
+					padding: "4px 0",
+				}}
+			>
+				{"- ".repeat(depth)}
+				{node.name}
+			</div>
+		);
+	};
+
 	return (
-		<div style={{ minHeight: "100vh", paddingTop: "24px" }}>
+		<div style={{ minHeight: "80vh", paddingTop: "24px" }}>
 			<div
 				style={{
 					backgroundColor: "white",
@@ -162,10 +201,25 @@ function App() {
 					padding: "0 24px",
 				}}
 			>
-				{!loading && searchResults.size > 0 && (
-					<div>
-						<div style={{ textAlign: "left" }}>
-							{RenderResultItemWithoutRecursion(searchResults)}
+				{!loading && flattenedResults.length > 0 && (
+					<div
+						ref={parentRef}
+						style={{
+							height: "600px",
+							overflow: "auto",
+							border: "1px solid #f0f0f0",
+							borderRadius: "6px",
+							padding: "8px",
+						}}
+					>
+						<div
+							style={{
+								height: `${rowVirtualizer.getTotalSize()}px`,
+								width: "100%",
+								position: "relative",
+							}}
+						>
+							{rowVirtualizer.getVirtualItems().map(renderVirtualItem)}
 						</div>
 					</div>
 				)}

@@ -110,7 +110,7 @@ function App() {
 
 			result.push(
 				<div key={node.id}>
-					{"-".repeat(depth)}
+					{"- ".repeat(depth)}
 					{node.name}
 				</div>
 			);

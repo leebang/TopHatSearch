@@ -1,8 +1,8 @@
 import { SearchOutlined } from "@ant-design/icons";
-import { Input, Typography, message } from "antd";
-import { useState, useRef } from "react";
-import { useVirtualizer } from "@tanstack/react-virtual";
+import { Input, message, Typography } from "antd";
+import { useState } from "react";
 import "./App.css";
+import { VirtualScroller } from "./VirtualScroller";
 
 const { Search } = Input;
 const { Title } = Typography;
@@ -13,7 +13,7 @@ interface SearchResult {
 	parent_id: number;
 }
 
-interface FlattenedResult {
+export interface FlattenedResult {
 	node: SearchResult;
 	depth: number;
 }
@@ -23,11 +23,45 @@ type ApiResponse = SearchResult[];
 type FormattedMap = Map<number, SearchResult[]>;
 
 function App() {
-	const [searchResults, setSearchResults] = useState<FormattedMap>(new Map());
+	const [flattenedResults, setFlattenedResults] = useState<FlattenedResult[]>(
+		[]
+	);
 	const [loading, setLoading] = useState(false);
 
-	// Ref for scroll container
-	const parentRef = useRef<HTMLDivElement>(null);
+	// Search params
+	const handleSearch = async (value: string) => {
+		// If input is empty, do nothing
+		if (!value) {
+			return;
+		}
+
+		setLoading(true);
+
+		try {
+			const apiParams = new URLSearchParams();
+			apiParams.set("query", value);
+
+			const response = await fetch(
+				`https://coursetreesearch-service-sandbox.dev.tophat.com/?${apiParams}`
+			);
+
+			if (!response.ok) {
+				throw new Error(`HTTP error! status: ${response.status}`);
+			}
+
+			const data: ApiResponse = await response.json();
+			if (data.length === 0) {
+				message.warning(`No results found for "${value}"`);
+			}
+			handleFormatResponse(data);
+		} catch (err) {
+			console.error("Search error:", err);
+			message.error("Something went wrong, please try again later");
+			setFlattenedResults([]);
+		} finally {
+			setLoading(false);
+		}
+	};
 
 	// Format the API response into a map
 	const handleFormatResponse = (data: ApiResponse) => {
@@ -48,54 +82,11 @@ function App() {
 			items.sort((a, b) => a.id - b.id);
 		});
 
-		return map;
-	};
-
-	const handleSearch = async (value: string) => {
-		// If input is empty, do nothing
-		if (!value) {
-			return;
-		}
-
-		setLoading(true);
-
-		try {
-			const response = await fetch(
-				`https://coursetreesearch-service-sandbox.dev.tophat.com/?query=${encodeURIComponent(
-					value
-				)}`
-			);
-
-			if (!response.ok) {
-				throw new Error(`HTTP error! status: ${response.status}`);
-			}
-
-			const data: ApiResponse = await response.json();
-			const formattedMap = handleFormatResponse(data);
-			setSearchResults(formattedMap);
-
-			// Show message if no results found
-			if (formattedMap.size === 0) {
-				message.warning(`No results found for "${value}"`);
-			}
-		} catch (err) {
-			console.error("Search error:", err);
-			message.error("Something went wrong, please try again later");
-			setSearchResults(new Map());
-		} finally {
-			setLoading(false);
-		}
-	};
-
-	// Flatten the tree structure into a linear array
-	const getFlattenedResults = () => {
-		if (searchResults.size === 0) return [];
-
 		const result: FlattenedResult[] = [];
 		const visited = new Set<number>();
 
 		// Iterative DFS using
-		const rootNodes = searchResults.get(0) || [];
+		const rootNodes = map.get(0) || [];
 		const stack: { node: SearchResult; depth: number }[] = [];
 
 		for (let i = rootNodes.length - 1; i >= 0; i--) {
@@ -117,7 +108,7 @@ function App() {
 
 			result.push({ node, depth });
 
-			const children = searchResults.get(node.id) || [];
+			const children = map.get(node.id) || [];
 
 			for (let i = children.length - 1; i >= 0; i--) {
 				if (!visited.has(children[i].id)) {
@@ -126,45 +117,7 @@ function App() {
 			}
 		}
 
-		return result;
-	};
-
-	const flattenedResults = getFlattenedResults();
-
-	// Virtualizer, only render what user see
-	const rowVirtualizer = useVirtualizer({
-		count: flattenedResults.length,
-		getScrollElement: () => parentRef.current,
-		estimateSize: () => 35,
-		overscan: 5,
-	});
-
-	// Render individual items
-	const renderVirtualItem = (virtualItem: any) => {
-		const item = flattenedResults[virtualItem.index];
-		if (!item) return null;
-
-		const { node, depth } = item;
-
-		return (
-			<div
-				key={virtualItem.key}
-				style={{
-					position: "absolute",
-					top: 0,
-					left: 0,
-					width: "100%",
-					height: `${virtualItem.size}px`,
-					transform: `translateY(${virtualItem.start}px)`,
-					display: "flex",
-					alignItems: "center",
-					padding: "4px 0",
-				}}
-			>
-				{"- ".repeat(depth)}
-				{node.name}
-			</div>
-		);
+		setFlattenedResults(result);
 	};
 
 	return (
@@ -188,7 +141,9 @@ function App() {
 						placeholder="Search for courses"
 						enterButton={<SearchOutlined />}
 						size="large"
-						onSearch={handleSearch}
+						onSearch={(e) => {
+							setTimeout(() => handleSearch(e), 1000);
+						}}
 						loading={loading}
 					/>
 				</div>
@@ -202,26 +157,7 @@ function App() {
 				}}
 			>
 				{!loading && flattenedResults.length > 0 && (
-					<div
-						ref={parentRef}
-						style={{
-							height: "600px",
-							overflow: "auto",
-							border: "1px solid #f0f0f0",
-							borderRadius: "6px",
-							padding: "8px",
-						}}
-					>
-						<div
-							style={{
-								height: `${rowVirtualizer.getTotalSize()}px`,
-								width: "100%",
-								position: "relative",
-							}}
-						>
-							{rowVirtualizer.getVirtualItems().map(renderVirtualItem)}
-						</div>
-					</div>
+					<VirtualScroller flattenedResults={flattenedResults} />
 				)}
 			</div>
 		</div>
